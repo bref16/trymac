@@ -566,93 +566,67 @@ class Panel(QtWidgets.QWidget):
         self.status.setText(f"Режим: {self.current_mode}" + (f", {self.side_filter}" if self.side_filter else ""))
 
     def _fetch_tin_by_pn(self, pn: str):
-        if not pn or self.engine is None or not self.tin_ref_col:
-            return ("", None, None, None)
-        pn_text = str(pn).strip().replace(",", ".")
-        pn_digits = digits_only(pn_text)
-        pn_num = None
-        try:
-            f = float(pn_text); pn_num = int(f) if f.is_integer() else f
-        except Exception:
-            pn_num = None
-        ref = qident(self.tin_ref_col)
-        desc = qident(self.tin_desc_col)
-        pack = qident(self.tin_pack_col) if self.tin_pack_col else "NULL"
-        list_col = qident(self.tin_price_list_col) if self.tin_price_list_col else "NULL"
-        trm_col  = qident(self.tin_price_trimm_col) if self.tin_price_trimm_col else "NULL"
-# build the optional numeric clause separately (no backslashes inside { ... })
-or_numeric = ""
-if pn_num is not None:
-    or_numeric = (
-        f"       OR ({ref}::text ~ '^\\s*\\d+(\\.\\d+)?\\s*' "
-        f"AND {ref}::numeric = :pn_num)\n"
-    )
-
-sql = f"""
-    SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm
-    FROM {qident(TIN_ALL_TABLE)}
-    WHERE trim({ref}::text) = :pn_text
-       OR regexp_replace({ref}::text, '\\\\D', '', 'g') = :pn_digits
-{or_numeric}    LIMIT 1
-"""
-        try:
-            with self.engine.connect() as conn:
-                params = {"pn_text": pn_text, "pn_digits": pn_digits}
-                if pn_num is not None:
-                    params["pn_num"] = pn_num
-                row = conn.execute(text(sql), params).fetchone()
-                if row:
-                    return (str(row[0] or ""),
-                            None if row[1] is None else str(row[1]),
-                            None if row[2] is None else str(row[2]),
-                            None if row[3] is None else str(row[3]))
-        except Exception:
-            pass
+    if not pn or self.engine is None or not self.tin_ref_col:
         return ("", None, None, None)
 
-    def _rebuild_left(self):
-        while self.leftLayout.count():
-            item = self.leftLayout.takeAt(0)
-            w = item.widget()
-            if w: w.deleteLater()
-        self.row_controls.clear()
+    pn_text = str(pn).strip().replace(",", ".")
+    pn_digits = digits_only(pn_text)
 
-        if not self.labels:
-            self.leftLayout.addWidget(QtWidgets.QLabel("Нет заголовков для блоков."))
-            return
+    pn_num = None
+    try:
+        f = float(pn_text)
+        pn_num = int(f) if f.is_integer() else f
+    except Exception:
+        pn_num = None
 
-        for label in self.labels:
-            roww = QtWidgets.QWidget()
-            lay = QtWidgets.QHBoxLayout(roww)
-            lay.setContentsMargins(2,2,2,2)
+    ref = qident(self.tin_ref_col)
+    desc = qident(self.tin_desc_col)
+    pack = qident(self.tin_pack_col) if self.tin_pack_col else "NULL"
+    list_col = qident(self.tin_price_list_col) if self.tin_price_list_col else "NULL"
+    trm_col = qident(self.tin_price_trimm_col) if self.tin_price_trimm_col else "NULL"
 
-            lab = QtWidgets.QLabel(label); lab.setMinimumWidth(240)
-            combo = QtWidgets.QComboBox(); combo.setMinimumWidth(320)
+    # Build optional numeric clause separately (no backslashes inside { ... }).
+    or_numeric = ""
+    if pn_num is not None:
+        or_numeric = (
+            "       OR ({ref}::text ~ '^\\s*\\d+(\\.\\d+)?\\s*' "
+            "AND {ref}::numeric = :pn_num)\n"
+        ).format(ref=ref)
 
-            table_name = LABEL_TO_TABLE.get(label)
-            options = []
-            if table_name:
-                pn_map = self.options_cache.get((table_name, self.current_mode, self.side_filter)) or {}
-                options = list(pn_map.keys())
-            if not options:
-                options = ["(нет данных)"]
-            combo.addItems(options)
+    # Use .format() to avoid f-string backslash issues
+    sql = (
+        "SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm\n"
+        "FROM {table}\n"
+        "WHERE trim({ref}::text) = :pn_text\n"
+        "   OR regexp_replace({ref}::text, '\\\\D', '', 'g') = :pn_digits\n"
+        "{or_numeric}"
+        "LIMIT 1"
+    ).format(
+        desc=desc,
+        pack=pack,
+        list_col=list_col,
+        trm_col=trm_col,
+        table=qident(TIN_ALL_TABLE),
+        ref=ref,
+        or_numeric=or_numeric,
+    )
 
-            spin = QtWidgets.QSpinBox(); spin.setMinimum(0); spin.setMaximum(10**6)
-
-            addBtn = QtWidgets.QPushButton("+"); addBtn.setFixedWidth(36)
-            addBtn.setAutoDefault(False); addBtn.setDefault(False)
-            addBtn.clicked.connect(partial(self.add_to_summary, label, combo, spin))
-
-            lay.addWidget(lab, 0)
-            lay.addWidget(combo, 1)
-            lay.addWidget(QtWidgets.QLabel("К-во:"))
-            lay.addWidget(spin, 0)
-            lay.addWidget(addBtn, 0)
-
-            self.leftLayout.addWidget(roww)
-            self.row_controls.append(RowControl(label, combo, spin))
-        self.leftLayout.addStretch(1)
+    try:
+        with self.engine.connect() as conn:
+            params = {"pn_text": pn_text, "pn_digits": pn_digits}
+            if pn_num is not None:
+                params["pn_num"] = pn_num
+            row = conn.execute(text(sql), params).fetchone()
+            if row:
+                return (
+                    str(row[0] or ""),
+                    None if row[1] is None else str(row[1]),
+                    None if row[2] is None else str(row[2]),
+                    None if row[3] is None else str(row[3]),
+                )
+    except Exception:
+        pass
+    return ("", None, None, None)
 
     def add_to_summary(self, label: str, combo: QtWidgets.QComboBox, spin: QtWidgets.QSpinBox):
         option = combo.currentText()
