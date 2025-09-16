@@ -37,23 +37,44 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
 
-      # === Option A: normalize indentation & line endings to avoid IndentationError ===
-      - name: Normalize indentation (tabs -> 4 spaces) and line endings
+      # Normalize line endings and expand tabs to 8 spaces (Python's tab width)
+      - name: Normalize indentation (tabs -> 8 spaces) and line endings
         run: |
           python - <<'PY'
           import pathlib
           p = pathlib.Path("mag_panel.py")
           s = p.read_text(encoding="utf-8")
-          # Normalize line endings
           s = s.replace("\r\n", "\n").replace("\r", "\n")
-          # Convert tabs to 4 spaces everywhere
-          s = "\n".join(line.expandtabs(4) for line in s.split("\n"))
-          p.write_text(s + ("\n" if not s.endswith("\n") else ""), encoding="utf-8")
+          s = "\n".join(line.expandtabs(8) for line in s.split("\n"))
+          if not s.endswith("\n"):
+              s += "\n"
+          p.write_text(s, encoding="utf-8")
           PY
 
-      - name: Syntax check (fail fast)
-        run: python -m py_compile mag_panel.py
 
+      # Helpful: show context if there is still an indentation error
+      - name: Syntax check (with context on failure)
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          path = "mag_panel.py"
+          src  = pathlib.Path(path).read_text(encoding="utf-8")
+          try:
+              compile(src, path, "exec")
+              print("Syntax OK")
+          except IndentationError as e:
+              lines = src.splitlines()
+              ln = e.lineno or 1
+              start = max(1, ln-10); end = min(len(lines), ln+10)
+              print(f"\nIndentationError at line {ln}:\n")
+              for i in range(start, end+1):
+                  # visualize leading whitespace (tabs -> →, spaces -> ·)
+                  raw = lines[i-1]
+                  lead = len(raw) - len(raw.lstrip("\t "))
+                  vis  = raw[:lead].replace("\t","→").replace(" ", "·") + raw[lead:]
+                  print(f"{i:5d} | {vis}")
+              raise
+          PY
       - name: Build MAG Config.app (Qt)
         run: |
           pyinstaller --noconfirm --windowed \
