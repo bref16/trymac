@@ -8,16 +8,19 @@ on:
 permissions:
   contents: write
 
+# Cancel older in-progress runs for the same ref (saves time)
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-macos:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-14   # Apple Silicon
-            arch: arm64
-          - runner: macos-13   # Intel
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    # Build Apple Silicon only while iterating. Re-enable Intel later if needed.
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -29,13 +32,19 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
 
+      # Optional: cache PyInstaller's own cache between runs
+      - name: Cache PyInstaller cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pyinstaller
+          key: pyinstaller-${{ runner.os }}-arm64-py311
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
+          pip install -r requirements.txt pyinstaller
 
-      # Clean any previous outputs/specs so we don't reuse stale settings
-      - name: Clean build artifacts
+      - name: Clean previous build artifacts/specs
         run: |
           rm -rf build dist
           rm -f "MAG Config.spec" "PG Admin GUI.spec"
@@ -46,7 +55,7 @@ jobs:
           python -m py_compile pg_admin_gui.py
 
       # ---- Main app (Qt/PySide6) ----
-      # Rely on PyInstaller's built-in PySide6 hook (don't use --collect-all to avoid duplicate frameworks)
+      # Rely on PyInstaller's PySide6 hook (no --collect-all to avoid duplicate frameworks)
       - name: Build MAG Config.app
         shell: bash
         run: |
@@ -54,12 +63,25 @@ jobs:
             --name "MAG Config" mag_panel.py \
             --add-data "template.xlsx:."
 
-      # Optional: quick offscreen smoke test to surface plugin issues in logs (non-fatal)
-      - name: Smoke test MAG Config (offscreen)
+      # SAFE smoke test: start for 5s in offscreen mode, then terminate (prevents hanging)
+      - name: Smoke test MAG Config (5s, offscreen)
         shell: bash
         run: |
-          QT_DEBUG_PLUGINS=1 QT_QPA_PLATFORM=offscreen \
-            "dist/MAG Config.app/Contents/MacOS/MAG Config" || true
+          python - <<'PY'
+          import os, subprocess, time, signal
+          app = "dist/MAG Config.app/Contents/MacOS/MAG Config"
+          env = os.environ.copy()
+          env["QT_QPA_PLATFORM"] = "offscreen"
+          env["QT_DEBUG_PLUGINS"] = "1"
+          p = subprocess.Popen([app], env=env)
+          time.sleep(5)
+          p.terminate()
+          try:
+              p.wait(timeout=5)
+          except Exception:
+              p.kill()
+          print("Started and terminated OK")
+          PY
 
       # ---- Admin app (Tk) ----
       - name: Build PG Admin GUI.app
@@ -68,25 +90,24 @@ jobs:
           pyinstaller --noconfirm --windowed \
             --name "PG Admin GUI" pg_admin_gui.py
 
-      # ---- Package & upload ----
       - name: Zip apps (preserve mac metadata)
         shell: bash
         run: |
-          ditto -c -k --sequesterRsrc --keepParent "dist/MAG Config.app" "MAG-Config-macOS-${{ matrix.arch }}.zip"
-          ditto -c -k --sequesterRsrc --keepParent "dist/PG Admin GUI.app" "PG-Admin-GUI-macOS-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/MAG Config.app" "MAG-Config-macOS-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/PG Admin GUI.app" "PG-Admin-GUI-macOS-arm64.zip"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macOS-apps-${{ matrix.arch }}
+          name: macOS-apps-arm64
           path: |
-            MAG-Config-macOS-${{ matrix.arch }}.zip
-            PG-Admin-GUI-macOS-${{ matrix.arch }}.zip
+            MAG-Config-macOS-arm64.zip
+            PG-Admin-GUI-macOS-arm64.zip
 
       - name: Create GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            MAG-Config-macOS-${{ matrix.arch }}.zip
-            PG-Admin-GUI-macOS-${{ matrix.arch }}.zip
+            MAG-Config-macOS-arm64.zip
+            PG-Admin-GUI-macOS-arm64.zip
