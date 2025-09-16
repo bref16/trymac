@@ -1,0 +1,62 @@
+name: macOS build & release
+
+on:
+  workflow_dispatch: {}     # allow manual runs
+  push:
+    tags: ['v*']            # run on version tags, e.g. v1.0.0
+
+jobs:
+  build-macos:
+    # Build both Apple Silicon (arm64) and Intel (x86_64)
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14   # arm64
+            arch: arm64
+          - runner: macos-13   # x86_64
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
+
+      - name: Build MAG Config.app (Qt)
+        run: |
+          pyinstaller --noconfirm --windowed \
+            --name "MAG Config" mag_panel.py \
+            --add-data "template.xlsx:."
+
+      - name: Build PG Admin GUI.app (Tk)
+        run: |
+          pyinstaller --noconfirm --windowed \
+            --name "PG Admin GUI" pg_admin_gui.py
+
+      - name: Zip apps (preserve mac metadata)
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent "dist/MAG Config.app" "MAG-Config-macOS-${{ matrix.arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/PG Admin GUI.app" "PG-Admin-GUI-macOS-${{ matrix.arch }}.zip"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macOS-apps-${{ matrix.arch }}
+          path: |
+            MAG-Config-macOS-${{ matrix.arch }}.zip
+            PG-Admin-GUI-macOS-${{ matrix.arch }}.zip
+
+      - name: Create GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            MAG-Config-macOS-${{ matrix.arch }}.zip
+            PG-Admin-GUI-macOS-${{ matrix.arch }}.zip
