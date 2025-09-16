@@ -565,68 +565,68 @@ class Panel(QtWidgets.QWidget):
         self._rebuild_left()
         self.status.setText(f"Режим: {self.current_mode}" + (f", {self.side_filter}" if self.side_filter else ""))
 
-    def _fetch_tin_by_pn(self, pn: str):
-    if not pn or self.engine is None or not self.tin_ref_col:
+       def _fetch_tin_by_pn(self, pn: str):
+        if not pn or self.engine is None or not self.tin_ref_col:
+            return ("", None, None, None)
+
+        pn_text = str(pn).strip().replace(",", ".")
+        pn_digits = digits_only(pn_text)
+
+        pn_num = None
+        try:
+            f = float(pn_text)
+            pn_num = int(f) if f.is_integer() else f
+        except Exception:
+            pn_num = None
+
+        ref = qident(self.tin_ref_col)
+        desc = qident(self.tin_desc_col)
+        pack = qident(self.tin_pack_col) if self.tin_pack_col else "NULL"
+        list_col = qident(self.tin_price_list_col) if self.tin_price_list_col else "NULL"
+        trm_col = qident(self.tin_price_trimm_col) if self.tin_price_trimm_col else "NULL"
+
+        # Build optional numeric clause separately (avoid backslashes inside f-string expressions)
+        or_numeric = ""
+        if pn_num is not None:
+            or_numeric = (
+                "       OR ({ref}::text ~ '^\\s*\\d+(\\.\\d+)?\\s*' "
+                "AND {ref}::numeric = :pn_num)\n"
+            ).format(ref=ref)
+
+        sql = (
+            "SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm\n"
+            "FROM {table}\n"
+            "WHERE trim({ref}::text) = :pn_text\n"
+            "   OR regexp_replace({ref}::text, '\\\\D', '', 'g') = :pn_digits\n"
+            "{or_numeric}"
+            "LIMIT 1"
+        ).format(
+            desc=desc,
+            pack=pack,
+            list_col=list_col,
+            trm_col=trm_col,
+            table=qident(TIN_ALL_TABLE),
+            ref=ref,
+            or_numeric=or_numeric,
+        )
+
+        try:
+            with self.engine.connect() as conn:
+                params = {"pn_text": pn_text, "pn_digits": pn_digits}
+                if pn_num is not None:
+                    params["pn_num"] = pn_num
+                row = conn.execute(text(sql), params).fetchone()
+                if row:
+                    return (
+                        str(row[0] or ""),
+                        None if row[1] is None else str(row[1]),
+                        None if row[2] is None else str(row[2]),
+                        None if row[3] is None else str(row[3]),
+                    )
+        except Exception:
+            pass
         return ("", None, None, None)
 
-    pn_text = str(pn).strip().replace(",", ".")
-    pn_digits = digits_only(pn_text)
-
-    pn_num = None
-    try:
-        f = float(pn_text)
-        pn_num = int(f) if f.is_integer() else f
-    except Exception:
-        pn_num = None
-
-    ref = qident(self.tin_ref_col)
-    desc = qident(self.tin_desc_col)
-    pack = qident(self.tin_pack_col) if self.tin_pack_col else "NULL"
-    list_col = qident(self.tin_price_list_col) if self.tin_price_list_col else "NULL"
-    trm_col = qident(self.tin_price_trimm_col) if self.tin_price_trimm_col else "NULL"
-
-    # Build optional numeric clause separately (no backslashes inside { ... }).
-    or_numeric = ""
-    if pn_num is not None:
-        or_numeric = (
-            "       OR ({ref}::text ~ '^\\s*\\d+(\\.\\d+)?\\s*' "
-            "AND {ref}::numeric = :pn_num)\n"
-        ).format(ref=ref)
-
-    # Use .format() to avoid f-string backslash issues
-    sql = (
-        "SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm\n"
-        "FROM {table}\n"
-        "WHERE trim({ref}::text) = :pn_text\n"
-        "   OR regexp_replace({ref}::text, '\\\\D', '', 'g') = :pn_digits\n"
-        "{or_numeric}"
-        "LIMIT 1"
-    ).format(
-        desc=desc,
-        pack=pack,
-        list_col=list_col,
-        trm_col=trm_col,
-        table=qident(TIN_ALL_TABLE),
-        ref=ref,
-        or_numeric=or_numeric,
-    )
-
-    try:
-        with self.engine.connect() as conn:
-            params = {"pn_text": pn_text, "pn_digits": pn_digits}
-            if pn_num is not None:
-                params["pn_num"] = pn_num
-            row = conn.execute(text(sql), params).fetchone()
-            if row:
-                return (
-                    str(row[0] or ""),
-                    None if row[1] is None else str(row[1]),
-                    None if row[2] is None else str(row[2]),
-                    None if row[3] is None else str(row[3]),
-                )
-    except Exception:
-        pass
-    return ("", None, None, None)
 
     def add_to_summary(self, label: str, combo: QtWidgets.QComboBox, spin: QtWidgets.QSpinBox):
         option = combo.currentText()
