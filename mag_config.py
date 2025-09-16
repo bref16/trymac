@@ -616,6 +616,7 @@ def _fetch_tin_by_pn(self, pn: str):
 
     pn_text = str(pn).strip().replace(",", ".")
     pn_digits = digits_only(pn_text)
+
     pn_num = None
     try:
         f = float(pn_text)
@@ -629,21 +630,22 @@ def _fetch_tin_by_pn(self, pn: str):
     list_col = qident(self.tin_price_list_col) if self.tin_price_list_col else "NULL"
     trm_col  = qident(self.tin_price_trimm_col) if self.tin_price_trimm_col else "NULL"
 
-    # ⬇️ Build the optional clause OUTSIDE the f-string (so no backslashes in { ... }):
+    # Build the optional clause OUTSIDE the f-string (so no backslashes inside {...})
     pn_num_clause = ""
     if pn_num is not None:
         pn_num_clause = (
             f" OR ({ref}::text ~ '^\\s*\\d+(\\.\\d+)?\\s*$' AND ({ref}::numeric) = :pn_num)"
         )
 
-    sql = f"""
-        SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm
-        FROM {qident(TIN_ALL_TABLE)}
-        WHERE trim({ref}::text) = :pn_text
-           OR regexp_replace({ref}::text, '\\\\D', '', 'g') = :pn_digits
-           {pn_num_clause}
-        LIMIT 1
-    """
+    # Note: inside the SQL string, use '\\\\D' so the generated SQL sees '\D'
+    sql = (
+        f"SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm "
+        f"FROM {qident(TIN_ALL_TABLE)} "
+        f"WHERE trim({ref}::text) = :pn_text "
+        f"   OR regexp_replace({ref}::text, '\\\\D', '', 'g') = :pn_digits"
+        f"{pn_num_clause} "
+        "LIMIT 1"
+    )
 
     try:
         with self.engine.connect() as conn:
