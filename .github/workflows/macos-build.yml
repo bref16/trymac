@@ -1,25 +1,22 @@
 name: macOS build & release
 
 on:
-  workflow_dispatch: {}        # allow manual runs from the Actions tab
+  workflow_dispatch: {}          # manual runs
   push:
-    tags: ['v*']               # run automatically on version tags like v1.0.0
+    tags: ['v*']                 # e.g. v1.0.0
 
-# needed to publish releases with the GITHUB_TOKEN
 permissions:
-  contents: write
+  contents: write                # needed for publishing releases
 
 jobs:
   build-macos:
-    # Build both Apple Silicon (arm64) and Intel (x86_64)
     strategy:
       matrix:
         include:
-          - runner: macos-14   # Apple Silicon
+          - runner: macos-14     # Apple Silicon
             arch: arm64
-          - runner: macos-13   # Intel
+          - runner: macos-13     # Intel
             arch: x86_64
-            
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -37,57 +34,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
 
-      # Normalize line endings and expand tabs to 8 spaces (Python's tab width)
-      - name: Normalize indentation (tabs -> 8 spaces) and line endings
+      - name: Syntax check (fail fast)
         run: |
-          python - <<'PY'
-          import pathlib
-          p = pathlib.Path("mag_panel.py")
-          s = p.read_text(encoding="utf-8")
-          s = s.replace("\r\n", "\n").replace("\r", "\n")
-          s = "\n".join(line.expandtabs(8) for line in s.split("\n"))
-          if not s.endswith("\n"):
-              s += "\n"
-          p.write_text(s, encoding="utf-8")
-          PY
+          python -m py_compile mag_panel.py
+          python -m py_compile pg_admin_gui.py
 
-
-      # Helpful: show context if there is still an indentation error
-      - name: Syntax check (with context on failure)
+      # ---- Main app (Qt / PySide6) ----
+      - name: Build MAG Config.app (Qt, bundle all PySide6)
         run: |
-          python - <<'PY'
-          import pathlib, sys
-          path = "mag_panel.py"
-          src  = pathlib.Path(path).read_text(encoding="utf-8")
-          try:
-              compile(src, path, "exec")
-              print("Syntax OK")
-          except IndentationError as e:
-              lines = src.splitlines()
-              ln = e.lineno or 1
-              start = max(1, ln-10); end = min(len(lines), ln+10)
-              print(f"\nIndentationError at line {ln}:\n")
-              for i in range(start, end+1):
-                  # visualize leading whitespace (tabs -> →, spaces -> ·)
-                  raw = lines[i-1]
-                  lead = len(raw) - len(raw.lstrip("\t "))
-                  vis  = raw[:lead].replace("\t","→").replace(" ", "·") + raw[lead:]
-                  print(f"{i:5d} | {vis}")
-              raise
-          PY
-          - name: Build MAG Config.app (Qt)
-          run: |
           pyinstaller --noconfirm --windowed \
-          --collect-all PySide6 \
-          --name "MAG Config" mag_panel.py \
-          --add-data "template.xlsx:."
- 
+            --collect-all PySide6 \
+            --name "MAG Config" mag_panel.py \
+            --add-data "template.xlsx:."
+      # Optional: smoke test in offscreen mode to reveal plugin issues in logs
+      - name: Smoke test MAG Config (offscreen)
+        run: |
+          QT_DEBUG_PLUGINS=1 QT_QPA_PLATFORM=offscreen \
+            "dist/MAG Config.app/Contents/MacOS/MAG Config" || true
 
+      # ---- Admin app (Tk) ----
       - name: Build PG Admin GUI.app (Tk)
         run: |
           pyinstaller --noconfirm --windowed \
             --name "PG Admin GUI" pg_admin_gui.py
 
+      # ---- Package & upload artifacts ----
       - name: Zip apps (preserve mac metadata)
         run: |
           ditto -c -k --sequesterRsrc --keepParent "dist/MAG Config.app" "MAG-Config-macOS-${{ matrix.arch }}.zip"
@@ -101,6 +72,7 @@ jobs:
             MAG-Config-macOS-${{ matrix.arch }}.zip
             PG-Admin-GUI-macOS-${{ matrix.arch }}.zip
 
+      # ---- Publish on tag ----
       - name: Create GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
