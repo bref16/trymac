@@ -1,21 +1,21 @@
 name: macOS build & release
 
 on:
-  workflow_dispatch: {}          # manual runs
+  workflow_dispatch: {}
   push:
-    tags: ['v*']                 # e.g. v1.0.0
+    tags: ['v*']
 
 permissions:
-  contents: write                # needed for publishing releases
+  contents: write
 
 jobs:
   build-macos:
     strategy:
       matrix:
         include:
-          - runner: macos-14     # Apple Silicon
+          - runner: macos-14   # Apple Silicon
             arch: arm64
-          - runner: macos-13     # Intel
+          - runner: macos-13   # Intel
             arch: x86_64
     runs-on: ${{ matrix.runner }}
 
@@ -34,32 +34,43 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pyinstaller-hooks-contrib
 
+      # Clean any previous outputs/specs so we don't reuse stale settings
+      - name: Clean build artifacts
+        run: |
+          rm -rf build dist
+          rm -f "MAG Config.spec" "PG Admin GUI.spec"
+
       - name: Syntax check (fail fast)
         run: |
           python -m py_compile mag_panel.py
           python -m py_compile pg_admin_gui.py
 
-      # ---- Main app (Qt / PySide6) ----
-      - name: Build MAG Config.app (Qt, bundle all PySide6)
+      # ---- Main app (Qt/PySide6) ----
+      # Rely on PyInstaller's built-in PySide6 hook (don't use --collect-all to avoid duplicate frameworks)
+      - name: Build MAG Config.app
+        shell: bash
         run: |
           pyinstaller --noconfirm --windowed \
-            --collect-all PySide6 \
             --name "MAG Config" mag_panel.py \
             --add-data "template.xlsx:."
-      # Optional: smoke test in offscreen mode to reveal plugin issues in logs
+
+      # Optional: quick offscreen smoke test to surface plugin issues in logs (non-fatal)
       - name: Smoke test MAG Config (offscreen)
+        shell: bash
         run: |
           QT_DEBUG_PLUGINS=1 QT_QPA_PLATFORM=offscreen \
             "dist/MAG Config.app/Contents/MacOS/MAG Config" || true
 
       # ---- Admin app (Tk) ----
-      - name: Build PG Admin GUI.app (Tk)
+      - name: Build PG Admin GUI.app
+        shell: bash
         run: |
           pyinstaller --noconfirm --windowed \
             --name "PG Admin GUI" pg_admin_gui.py
 
-      # ---- Package & upload artifacts ----
+      # ---- Package & upload ----
       - name: Zip apps (preserve mac metadata)
+        shell: bash
         run: |
           ditto -c -k --sequesterRsrc --keepParent "dist/MAG Config.app" "MAG-Config-macOS-${{ matrix.arch }}.zip"
           ditto -c -k --sequesterRsrc --keepParent "dist/PG Admin GUI.app" "PG-Admin-GUI-macOS-${{ matrix.arch }}.zip"
@@ -72,7 +83,6 @@ jobs:
             MAG-Config-macOS-${{ matrix.arch }}.zip
             PG-Admin-GUI-macOS-${{ matrix.arch }}.zip
 
-      # ---- Publish on tag ----
       - name: Create GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
