@@ -580,14 +580,21 @@ class Panel(QtWidgets.QWidget):
         pack = qident(self.tin_pack_col) if self.tin_pack_col else "NULL"
         list_col = qident(self.tin_price_list_col) if self.tin_price_list_col else "NULL"
         trm_col  = qident(self.tin_price_trimm_col) if self.tin_price_trimm_col else "NULL"
-        sql = f'''
-            SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm
-            FROM {qident(TIN_ALL_TABLE)}
-            WHERE trim({ref}::text) = :pn_text
-               OR regexp_replace({ref}::text, '\\D', '', 'g') = :pn_digits
-               {"OR (" + ref + "::text ~ '^\\s*\\d+(\\.\\d+)?\\s*$' AND (" + ref + "::numeric) = :pn_num)" if pn_num is not None else ""}
-            LIMIT 1
-        '''
+# build the optional numeric clause separately (no backslashes inside { ... })
+or_numeric = ""
+if pn_num is not None:
+    or_numeric = (
+        f"       OR ({ref}::text ~ '^\\s*\\d+(\\.\\d+)?\\s*' "
+        f"AND {ref}::numeric = :pn_num)\n"
+    )
+
+sql = f"""
+    SELECT {desc} AS desc_ru, {pack} AS pack, {list_col} AS price_list, {trm_col} AS price_trimm
+    FROM {qident(TIN_ALL_TABLE)}
+    WHERE trim({ref}::text) = :pn_text
+       OR regexp_replace({ref}::text, '\\\\D', '', 'g') = :pn_digits
+{or_numeric}    LIMIT 1
+"""
         try:
             with self.engine.connect() as conn:
                 params = {"pn_text": pn_text, "pn_digits": pn_digits}
