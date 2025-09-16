@@ -556,6 +556,9 @@ class Panel(QtWidgets.QWidget):
             self.status.setText(f'Шаблон "{type_name}" не дал совпадений по PN.')
 
     # ============== Interactions ==============
+class Panel(QtWidgets.QWidget):
+    # ... other methods ...
+
     def set_mode(self, mode: str, side: Optional[str] = None):
         m = (mode or "").strip()
         if m.lower() == "f":
@@ -563,9 +566,11 @@ class Panel(QtWidgets.QWidget):
         else:
             self.current_mode, self.side_filter = m, None
         self._rebuild_left()
-        self.status.setText(f"Режим: {self.current_mode}" + (f", {self.side_filter}" if self.side_filter else ""))
+        self.status.setText(
+            f"Режим: {self.current_mode}" + (f", {self.side_filter}" if self.side_filter else "")
+        )
 
-       def _fetch_tin_by_pn(self, pn: str):
+    def _fetch_tin_by_pn(self, pn: str):
         if not pn or self.engine is None or not self.tin_ref_col:
             return ("", None, None, None)
 
@@ -585,7 +590,7 @@ class Panel(QtWidgets.QWidget):
         list_col = qident(self.tin_price_list_col) if self.tin_price_list_col else "NULL"
         trm_col = qident(self.tin_price_trimm_col) if self.tin_price_trimm_col else "NULL"
 
-        # Build optional numeric clause separately (avoid backslashes inside f-string expressions)
+        # Optional numeric clause (built separately to avoid f-string backslash issues)
         or_numeric = ""
         if pn_num is not None:
             or_numeric = (
@@ -626,7 +631,6 @@ class Panel(QtWidgets.QWidget):
         except Exception:
             pass
         return ("", None, None, None)
-
 
     def add_to_summary(self, label: str, combo: QtWidgets.QComboBox, spin: QtWidgets.QSpinBox):
         option = combo.currentText()
