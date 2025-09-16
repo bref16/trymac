@@ -75,12 +75,12 @@ jobs:
                   print(f"{i:5d} | {vis}")
               raise
           PY
-    - name: Build MAG Config.app (Qt)
-  run: |
-    pyinstaller --noconfirm --windowed \
-      --collect-all PySide6 \
-      --name "MAG Config" mag_panel.py \
-      --add-data "template.xlsx:."
+          - name: Build MAG Config.app (Qt)
+          run: |
+          pyinstaller --noconfirm --windowed \
+          --collect-all PySide6 \
+          --name "MAG Config" mag_panel.py \
+          --add-data "template.xlsx:."
  
 
       - name: Build PG Admin GUI.app (Tk)
